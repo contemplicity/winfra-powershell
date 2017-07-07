@@ -1,0 +1,113 @@
+[CmdletBinding(DefaultParameterSetName='importFile')]
+    Param
+    (
+        # file path to a txt file containing a list of SUNET IDs on each line
+        [Parameter(Mandatory=$true,ParameterSetName='importFile')]
+        [ValidateNotNullOrEmpty()]
+        [string]$importFilePath,
+
+        # one or many SUNET IDs passed inline as an array, eg "sunet1","sunet2"
+        [Parameter(Mandatory=$true,ParameterSetName='inline')]
+        [ValidateNotNullOrEmpty()]
+        [string[]]$users
+
+
+    )
+
+
+Try {Import-Module -Name MSOnline -ErrorAction Stop} Catch [System.IO.FileNotFoundException]{Write-Warning "MSOnline module needed. Exiting."; break} 
+
+
+if (!(Get-Module -name MSOnline)) {Write-Warning "MSOnline module needed. Exiting."; break}
+
+if (!(Get-MsolDomain -ErrorAction SilentlyContinue)) {
+    Write-Warning "You must conect to MS Online. Attempting logon..." 
+   
+    Connect-MsolService 
+}
+
+if (!(Get-MsolDomain -ErrorAction SilentlyContinue)) {Write-Warning "Unable to authenticate to MS Online. Exiting" ; break }
+
+
+function Set-TeamsUserLicenseActive {
+
+param(
+    [Parameter(Mandatory=$true,Position=0)]
+    [string]$user
+)
+
+
+$disabledPlans = @"
+ADALLOM_S_O365
+EQUIVIO_ANALYTICS
+LOCKBOX_ENTERPRISE
+EXCHANGE_ANALYTICS
+SWAY
+ATP_ENTERPRISE
+MCOEV
+MCOMEETADV
+BI_AZURE_P2
+INTUNE_O365
+PROJECTWORKMANAGEMENT
+RMS_S_ENTERPRISE
+YAMMER_ENTERPRISE
+OFFICESUBSCRIPTION
+MCOSTANDARD
+EXCHANGE_S_ENTERPRISE
+SHAREPOINTENTERPRISE
+SHAREPOINTWAC
+"@
+
+$disabledPlans = ($disabledPlans -split '\n').Trim()
+
+
+
+Try {
+
+    $AADUser = Get-MsolUser -UserPrincipalName ($user+"@stanford.edu") -ErrorAction Stop
+
+    $skuID = 'office365stanford:ENTERPRISEPREMIUM'  
+
+    $skuOption = New-MsolLicenseOptions -AccountSkuId $skuID -DisabledPlans $disabledPlans
+
+    Write-Verbose "Setting MSOL user license for $($AADUser.UserPrincipalName): $skuID with $($skuOption.DisabledServicePlans) disabled" -Verbose
+
+    Set-MsolUserLicense -UserPrincipalName $AADUser.UserPrincipalName -AddLicenses $skuID -LicenseOptions $skuOption -Verbose
+     (Get-MsolUser -UserPrincipalName ($user+"@stanford.edu")).Licenses.serviceStatus 
+
+    } 
+
+Catch [Microsoft.Online.Administration.Automation.MicrosoftOnlineException]{ Write-Warning "user $user@stanford.edu not found in Azure AD or licensing error" }
+
+Catch { Write-Warning "unknown error when processing $user@stanford.edu" }
+
+}
+
+# main 
+
+
+
+if ($importFilePath) {$users = cat $importFilePath}
+
+foreach ($user in $users) {
+
+Write-Host -fore DarkCyan "`nApplying Teams license for " -NoNewline
+Write-Host -fore Magenta "$user"
+
+Set-TeamsUserLicenseActive -user $user | FT
+
+
+}
+   
+    
+<### Usage Examples
+
+# Example 1: users in a txt file, one sunetID per line
+
+ .\source\Set-TeamsUserLicenseActive.ps1 -importFilePath C:\Users\Public\skypers.txt 
+
+# Example 2: users passed inline, as a list of 1 or more sunetIDs 
+
+.\source\Set-TeamsUserLicenseActive.ps1 -users idouglas,rkaul1,jkverno
+
+###> 
